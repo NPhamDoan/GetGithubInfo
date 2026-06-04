@@ -1056,9 +1056,39 @@ Private Function SendGraphQLRequest(ByVal jsonBody As String, _
                                     ByRef responseBody As String, _
                                     ByRef errCode As String, _
                                     ByRef errMsg As String) As Boolean
-    Dim http As Object
     On Error GoTo NetErr
+#If Mac Then
+    ' --- macOS: use curl (no MSXML available) ---
+    Dim tmpDir As String, reqFile As String, respFile As String, hdrFile As String
+    tmpDir = MacTempDir()
+    reqFile = tmpDir & "ghreq.json"
+    respFile = tmpDir & "ghresp.json"
+    hdrFile = tmpDir & "ghhdr.txt"
     
+    WriteTextFile reqFile, jsonBody
+    
+    Dim cmd As String
+    cmd = "curl -s -D " & MacQuote(hdrFile) & " -o " & MacQuote(respFile) & _
+          " -w '%{http_code}'" & _
+          " -X POST " & MacQuote(GRAPHQL_URL) & _
+          " -H 'Content-Type: application/json'" & _
+          " -H 'Accept: application/json'" & _
+          " -H 'User-Agent: " & DEFAULT_USER_AGENT & "'" & _
+          " -H 'Authorization: Bearer " & m_Token & "'" & _
+          " --data-binary @" & MacQuote(reqFile)
+    
+    Dim codeStr As String
+    codeStr = MacRunShell(cmd)
+    httpStatus = CLng(Val(codeStr))
+    responseBody = ReadTextFile(respFile)
+    Dim hdrText As String: hdrText = ReadTextFile(hdrFile)
+    rateLimitRemaining = ExtractHeader(hdrText, "x-ratelimit-remaining")
+    rateLimitReset = ExtractHeader(hdrText, "x-ratelimit-reset")
+    SendGraphQLRequest = True
+    Exit Function
+#Else
+    ' --- Windows: MSXML (with test seam) ---
+    Dim http As Object
     Set http = CreateHttpClient()                                        ' Req 11.3
     http.setTimeouts HTTP_TIMEOUT_MS, HTTP_TIMEOUT_MS, _
                      HTTP_TIMEOUT_MS, HTTP_TIMEOUT_MS                    ' Req 9.2
@@ -1075,6 +1105,7 @@ Private Function SendGraphQLRequest(ByVal jsonBody As String, _
     responseBody = http.responseText
     SendGraphQLRequest = True
     Exit Function
+#End If
 
 NetErr:
     ' Distinguish timeout (Err.Number = -2147012894 / 0x80072EE2) from other errors
@@ -1086,6 +1117,65 @@ NetErr:
     errMsg = Err.Description
     SendGraphQLRequest = False
 End Function
+
+#If Mac Then
+' macOS helper: run a shell command and return stdout
+Private Function MacRunShell(ByVal cmd As String) As String
+    On Error Resume Next
+    MacRunShell = MacScript("do shell script " & Chr$(34) & _
+                            Replace(cmd, Chr$(34), "\" & Chr$(34)) & Chr$(34))
+    On Error GoTo 0
+End Function
+
+' macOS temp directory (with trailing slash)
+Private Function MacTempDir() As String
+    Dim d As String
+    d = MacRunShell("echo $TMPDIR")
+    If Right$(d, 1) <> "/" Then d = d & "/"
+    MacTempDir = d
+End Function
+
+' Wrap a path in single quotes for shell
+Private Function MacQuote(ByVal s As String) As String
+    MacQuote = "'" & Replace(s, "'", "'\''") & "'"
+End Function
+
+' Write text to file
+Private Sub WriteTextFile(ByVal path As String, ByVal content As String)
+    Dim f As Integer: f = FreeFile
+    Open path For Output As #f
+    Print #f, content
+    Close #f
+End Sub
+
+' Read text from file
+Private Function ReadTextFile(ByVal path As String) As String
+    Dim f As Integer: f = FreeFile
+    Dim s As String
+    On Error Resume Next
+    Open path For Input As #f
+    s = Input$(LOF(f), f)
+    Close #f
+    On Error GoTo 0
+    ReadTextFile = s
+End Function
+
+' Extract a header value (case-insensitive) from raw HTTP headers text
+Private Function ExtractHeader(ByVal raw As String, ByVal name As String) As String
+    Dim lines() As String, i As Long, ln As String, p As Long
+    lines = Split(raw, vbLf)
+    For i = 0 To UBound(lines)
+        ln = lines(i)
+        p = InStr(ln, ":")
+        If p > 0 Then
+            If LCase$(Trim$(Left$(ln, p - 1))) = LCase$(name) Then
+                ExtractHeader = Trim$(Mid$(ln, p + 1))
+                Exit Function
+            End If
+        End If
+    Next i
+End Function
+#End If
 
 ' ---------------------------------------------------------------------------
 ' SetGitHubToken - Configure the Personal Access Token for API authentication
@@ -1555,13 +1645,12 @@ Public Sub WriteRepoIssuesTable(ByVal githubId As String, _
         
         If result.TotalCount > 0 Then
             ' Iterate all items' ProjectFields JSON to find unique project field names
+            ' Use Collection (built-in) for Windows + Mac compatibility
             Dim pfi As Long
             Dim pfParsed As Object
             Dim pfItem As Object
             Dim pfKey As String
-            Dim pfDict As Object
-            Set pfDict = CreateObject("Scripting.Dictionary")
-            pfDict.CompareMode = vbBinaryCompare
+            Dim pfCol As New Collection
             
             Dim tmpIssue As RepoIssue
             For pfi = 1 To m_IssuesCount
@@ -1576,23 +1665,22 @@ Public Sub WriteRepoIssuesTable(ByVal githubId As String, _
                         For pfj = 1 To pfParsed.Count
                             Set pfItem = pfParsed(pfj)
                             pfKey = "[" & pfItem("project") & "] " & pfItem("field")
-                            If Not pfDict.Exists(pfKey) Then
-                                pfDict.Add pfKey, pfKey
-                            End If
+                            ' Add only if key not already present
+                            On Error Resume Next
+                            pfCol.Add pfKey, pfKey
+                            On Error GoTo 0
                         Next pfj
                     End If
                 End If
             Next pfi
             
             ' Sort discovered project fields alphabetically
-            If pfDict.Count > 0 Then
-                projFieldCount = pfDict.Count
+            If pfCol.Count > 0 Then
+                projFieldCount = pfCol.Count
                 ReDim projFields(1 To projFieldCount)
-                Dim pfKeys As Variant
-                pfKeys = pfDict.Keys
                 Dim pfIdx As Long
-                For pfIdx = 0 To UBound(pfKeys)
-                    projFields(pfIdx + 1) = pfKeys(pfIdx)
+                For pfIdx = 1 To projFieldCount
+                    projFields(pfIdx) = pfCol(pfIdx)
                 Next pfIdx
                 
                 ' Simple bubble sort for alphabetical ordering

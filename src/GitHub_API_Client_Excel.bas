@@ -99,21 +99,16 @@ Private Sub GetRepoIssues(ByVal githubId As String, _
         If cursor <> "" Then body = body & ",""after"":""" & JEsc(cursor) & """"
         body = body & "}}"
         
-        ' Send HTTP request
-        Dim http As Object, httpStatus As Long
-        Set http = CreateObject("MSXML2.ServerXMLHTTP.6.0")
-        http.setTimeouts HTTP_TIMEOUT_MS, HTTP_TIMEOUT_MS, HTTP_TIMEOUT_MS, HTTP_TIMEOUT_MS
-        http.Open "POST", GRAPHQL_URL, False
-        http.setRequestHeader "Content-Type", "application/json"
-        http.setRequestHeader "Accept", "application/json"
-        http.setRequestHeader "User-Agent", USER_AGENT
-        http.setRequestHeader "Authorization", "Bearer " & m_Token
-        http.send body
-        httpStatus = http.Status
+        ' Send HTTP request (cross-platform)
+        Dim httpStatus As Long, rlr As String, responseText As String, transErr As String
+        rlr = ""
+        If Not DoHttpPost(body, httpStatus, rlr, responseText, transErr) Then
+            SetFailure outResult, "NETWORK_ERROR", transErr
+            Exit Sub
+        End If
         
         ' Check HTTP status
         If httpStatus <> 200 Then
-            Dim rlr As String: rlr = "": On Error Resume Next: rlr = http.getResponseHeader("X-RateLimit-Remaining"): On Error GoTo CleanFail
             Select Case httpStatus
                 Case 401: SetFailure outResult, "UNAUTHORIZED", "Token invalid or expired": Exit Sub
                 Case 403
@@ -127,7 +122,7 @@ Private Sub GetRepoIssues(ByVal githubId As String, _
         ' Parse JSON
         Dim parsed As Object
         On Error GoTo ParseErr
-        Set parsed = JsonConverter.ParseJson(http.responseText)
+        Set parsed = JsonConverter.ParseJson(responseText)
         On Error GoTo CleanFail
         
         ' Check GraphQL errors
@@ -307,8 +302,8 @@ Public Sub WriteRepoIssuesTable(ByVal githubId As String, _
         defCols(7) = "UpdatedAt": defCols(8) = "ClosedAt": defCols(9) = "Labels"
         defCols(10) = "Assignees": defCols(11) = "Milestone"
         
-        ' Discover project fields
-        Dim pfDict As Object: Set pfDict = CreateObject("Scripting.Dictionary")
+        ' Discover project fields (use Collection — works on Windows + Mac)
+        Dim pfKeysCol As New Collection
         Dim pi As Long, pfParsed As Object, pfItem As Object, pfKey As String
         Dim tmpIssue As RepoIssue
         For pi = 1 To m_IssuesCount
@@ -322,18 +317,24 @@ Public Sub WriteRepoIssuesTable(ByVal githubId As String, _
                     For pj = 1 To pfParsed.Count
                         Set pfItem = pfParsed(pj)
                         pfKey = "[" & pfItem("project") & "] " & pfItem("field")
-                        If Not pfDict.Exists(pfKey) Then pfDict.Add pfKey, pfKey
+                        ' Add only if not already present (Collection key = pfKey)
+                        On Error Resume Next
+                        pfKeysCol.Add pfKey, pfKey
+                        On Error GoTo 0
                     Next pj
                 End If
             End If
         Next pi
         
-        colCount = 11 + pfDict.Count
+        colCount = 11 + pfKeysCol.Count
         ReDim colNames(1 To colCount)
         Dim ci As Long
         For ci = 1 To 11: colNames(ci) = defCols(ci): Next ci
-        If pfDict.Count > 0 Then
-            Dim pfKeys As Variant: pfKeys = pfDict.Keys
+        If pfKeysCol.Count > 0 Then
+            ' Copy collection into array for sorting
+            Dim pfKeys() As String
+            ReDim pfKeys(0 To pfKeysCol.Count - 1)
+            For ci = 1 To pfKeysCol.Count: pfKeys(ci - 1) = pfKeysCol(ci): Next ci
             ' Sort alphabetically
             Dim si As Long, sj As Long, st As String
             For si = 0 To UBound(pfKeys) - 1
@@ -441,6 +442,131 @@ End Sub
 Private Sub SetFailure(ByRef r As RepoIssuesResult, ByVal code As String, ByVal msg As String)
     r.Success = False: r.ErrorCode = code: r.ErrorMessage = msg: r.TotalCount = 0: m_IssuesCount = 0
 End Sub
+
+' ---------------------------------------------------------------------------
+' DoHttpPost - Cross-platform HTTP POST to GitHub GraphQL API
+' Windows: MSXML2.ServerXMLHTTP.6.0
+' Mac:     curl via AppleScriptTask/MacScript (no MSXML available)
+' Returns True on successful round-trip (inspect httpStatus); False on
+' transport failure (transErr set). rlr = X-RateLimit-Remaining header.
+' ---------------------------------------------------------------------------
+Private Function DoHttpPost(ByVal body As String, _
+                            ByRef httpStatus As Long, _
+                            ByRef rlr As String, _
+                            ByRef responseText As String, _
+                            ByRef transErr As String) As Boolean
+    On Error GoTo Failed
+#If Mac Then
+    ' --- macOS: use curl ---
+    Dim tmpDir As String, reqFile As String, respFile As String, hdrFile As String
+    tmpDir = MacTempDir()
+    reqFile = tmpDir & "ghreq.json"
+    respFile = tmpDir & "ghresp.json"
+    hdrFile = tmpDir & "ghhdr.txt"
+    
+    ' Write request body to a temp file (avoids shell-escaping the JSON)
+    WriteTextFile reqFile, body
+    
+    Dim cmd As String
+    cmd = "curl -s -D " & MacQuote(hdrFile) & " -o " & MacQuote(respFile) & _
+          " -w '%{http_code}'" & _
+          " -X POST " & MacQuote(GRAPHQL_URL) & _
+          " -H 'Content-Type: application/json'" & _
+          " -H 'Accept: application/json'" & _
+          " -H 'User-Agent: " & USER_AGENT & "'" & _
+          " -H 'Authorization: Bearer " & m_Token & "'" & _
+          " --data-binary @" & MacQuote(reqFile)
+    
+    Dim codeStr As String
+    codeStr = MacRunShell(cmd)
+    httpStatus = CLng(Val(codeStr))
+    responseText = ReadTextFile(respFile)
+    rlr = ExtractHeader(ReadTextFile(hdrFile), "x-ratelimit-remaining")
+    DoHttpPost = True
+    Exit Function
+#Else
+    ' --- Windows: MSXML ---
+    Dim http As Object
+    Set http = CreateObject("MSXML2.ServerXMLHTTP.6.0")
+    http.setTimeouts HTTP_TIMEOUT_MS, HTTP_TIMEOUT_MS, HTTP_TIMEOUT_MS, HTTP_TIMEOUT_MS
+    http.Open "POST", GRAPHQL_URL, False
+    http.setRequestHeader "Content-Type", "application/json"
+    http.setRequestHeader "Accept", "application/json"
+    http.setRequestHeader "User-Agent", USER_AGENT
+    http.setRequestHeader "Authorization", "Bearer " & m_Token
+    http.send body
+    httpStatus = http.Status
+    responseText = http.responseText
+    rlr = ""
+    On Error Resume Next
+    rlr = http.getResponseHeader("X-RateLimit-Remaining")
+    On Error GoTo Failed
+    DoHttpPost = True
+    Exit Function
+#End If
+Failed:
+    transErr = Err.Description
+    DoHttpPost = False
+End Function
+
+#If Mac Then
+' macOS helper: run a shell command and return stdout
+Private Function MacRunShell(ByVal cmd As String) As String
+    On Error Resume Next
+    MacRunShell = MacScript("do shell script " & Chr$(34) & _
+                            Replace(cmd, Chr$(34), "\" & Chr$(34)) & Chr$(34))
+    On Error GoTo 0
+End Function
+
+' macOS temp directory (with trailing slash)
+Private Function MacTempDir() As String
+    Dim d As String
+    d = MacRunShell("echo $TMPDIR")
+    If Right$(d, 1) <> "/" Then d = d & "/"
+    MacTempDir = d
+End Function
+
+' Wrap a path in single quotes for shell
+Private Function MacQuote(ByVal s As String) As String
+    MacQuote = "'" & Replace(s, "'", "'\''") & "'"
+End Function
+
+' Write text to file
+Private Sub WriteTextFile(ByVal path As String, ByVal content As String)
+    Dim f As Integer: f = FreeFile
+    Open path For Output As #f
+    Print #f, content
+    Close #f
+End Sub
+
+' Read text from file
+Private Function ReadTextFile(ByVal path As String) As String
+    Dim f As Integer: f = FreeFile
+    Dim s As String
+    On Error Resume Next
+    Open path For Input As #f
+    s = Input$(LOF(f), f)
+    Close #f
+    On Error GoTo 0
+    ReadTextFile = s
+End Function
+
+' Extract a header value (case-insensitive) from raw HTTP headers text
+Private Function ExtractHeader(ByVal raw As String, ByVal name As String) As String
+    Dim lines() As String, i As Long, ln As String, p As Long
+    lines = Split(raw, vbLf)
+    For i = 0 To UBound(lines)
+        ln = lines(i)
+        p = InStr(ln, ":")
+        If p > 0 Then
+            If LCase$(Trim$(Left$(ln, p - 1))) = LCase$(name) Then
+                ExtractHeader = Trim$(Mid$(ln, p + 1))
+                Exit Function
+            End If
+        End If
+    Next i
+End Function
+#End If
 
 ' Sanitize a string for use as an Excel sheet name (max 31 chars, no : \ / ? * [ ])
 Private Function SafeSheetName(ByVal raw As String) As String

@@ -11,12 +11,26 @@ Module VBA compact — chỉ phục vụ ghi danh sách Issues từ GitHub ra b�
 | `src/GitHub_API_Client_Excel.bas` | Module chính |
 | `src/JsonConverter.bas` | Parse JSON (Tim Hall, MIT) |
 
-### Bước thực hiện
+### Bước thực hiện (Windows)
 
 1. Mở Excel → **Alt + F11** → VBA Editor
 2. **File → Import File...** → chọn `GitHub_API_Client_Excel.bas`
 3. Lặp lại bước 2 cho `JsonConverter.bas`
 4. **Tools → References...** → tick **Microsoft Scripting Runtime** → OK
+
+### Bước thực hiện (macOS — Excel 365 for Mac)
+
+Module hỗ trợ cả Windows và macOS qua biên dịch có điều kiện (`#If Mac Then`).
+
+1. Mở Excel → **Tùy chọn (Option) + F11** → VBA Editor
+2. Import `GitHub_API_Client_Excel.bas` và `JsonConverter.bas`
+3. Import thêm **`Dictionary.cls`** (bản Mac của VBA-tools, tải tại [VBA-Dictionary](https://github.com/VBA-tools/VBA-Dictionary)) — vì Mac không có `Microsoft Scripting Runtime`
+4. Lần chạy đầu tiên, Excel sẽ hỏi quyền chạy lệnh shell (`curl`) → bấm **OK / Allow**
+
+| Môi trường | HTTP | JSON parse |
+|-----------|------|------------|
+| Windows | `MSXML2.ServerXMLHTTP.6.0` (sẵn có) | `Microsoft Scripting Runtime` |
+| macOS | `curl` qua `MacScript` (tự động) | import `Dictionary.cls` |
 
 ## Tạo Token
 

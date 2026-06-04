@@ -28,16 +28,27 @@ Mô-đun VBA cho phép lấy thông tin repository GitHub và danh sách Issues 
 5. Lặp lại bước 3-4 để nhập file `JsonConverter.bas`
 6. Đóng VBA Editor (Ctrl + Q hoặc nút X)
 
-> **Lưu ý:** Cả hai module đều sử dụng late binding (`CreateObject`) nên **không cần** thêm reference thủ công nào. Module hoạt động trên cả Office 32-bit và 64-bit.
+> **Lưu ý:** Cả hai module đều sử dụng late binding (`CreateObject`) nên **không cần** thêm reference thủ công nào trên Windows. Module hoạt động trên cả Office 32-bit và 64-bit.
+
+### Chạy trên macOS (Excel 365 for Mac)
+
+Module hỗ trợ **cả Windows và macOS** thông qua biên dịch có điều kiện (`#If Mac Then`):
+
+- **HTTP:** Trên Mac, `MSXML2.ServerXMLHTTP.6.0` không tồn tại → module tự động dùng `curl` qua `MacScript`. Cần cấp quyền cho Excel chạy lệnh shell (Excel sẽ hỏi lần đầu).
+- **JSON / Dictionary:** Trên Mac không có `Microsoft Scripting Runtime`. Bạn cần import thêm file **`Dictionary.cls`** (bản Mac của VBA-tools) để `JsonConverter` hoạt động. Tải tại [VBA-Dictionary](https://github.com/VBA-tools/VBA-Dictionary).
+- Module gốc đã thay `Scripting.Dictionary` bằng `Collection` (built-in) ở phần xử lý nội bộ nên chỉ còn `JsonConverter` cần `Dictionary.cls` trên Mac.
+
+| Môi trường | HTTP | JSON parse |
+|-----------|------|------------|
+| Windows | `MSXML2.ServerXMLHTTP.6.0` (sẵn có) | `Scripting.Dictionary` (sẵn có) |
+| macOS | `curl` qua `MacScript` | cần import `Dictionary.cls` |
 
 ### Tham chiếu thư viện
 
-Module sử dụng các thư viện có sẵn trên Windows, không cần cài đặt thêm:
+Module sử dụng các thư viện có sẵn, truy cập qua `CreateObject` (late binding):
 
-- `MSXML2.ServerXMLHTTP.6.0` (Microsoft XML, v6.0) — gọi HTTP
-- `Scripting.Dictionary` (Microsoft Scripting Runtime) — parse JSON
-
-Tất cả đều được truy cập qua `CreateObject` (late binding), không yêu cầu check reference trong VBA Editor.
+- **Windows:** `MSXML2.ServerXMLHTTP.6.0`, `Scripting.Dictionary`
+- **macOS:** `curl` (có sẵn trong macOS), `Dictionary.cls` (import thủ công)
 
 ## Tạo Personal Access Token trên GitHub
 
@@ -385,7 +396,8 @@ Public Sub SetMaxIssues(ByVal maxIssues As Long)
 ## Yêu cầu hệ thống
 
 - Microsoft Office 2007 trở lên (Excel, Word, hoặc Access)
-- Windows (cần `MSXML2.ServerXMLHTTP.6.0`)
+- **Windows:** dùng `MSXML2.ServerXMLHTTP.6.0` + `Scripting.Dictionary` (sẵn có)
+- **macOS (Excel 365):** dùng `curl` (sẵn có) + import `Dictionary.cls` cho `JsonConverter`
 - Kết nối Internet
 - Personal Access Token từ GitHub (thêm scope `read:project` nếu cần project fields)
 
