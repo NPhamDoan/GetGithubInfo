@@ -1584,6 +1584,63 @@ UdfFail:
 End Function
 
 ' ---------------------------------------------------------------------------
+' GetRepoIssuesJson - Lấy issues và trả về dưới dạng chuỗi JSON
+' Định dạng:
+'   {"success":true,"totalCount":N,"errorCode":"","errorMessage":"",
+'    "issues":[ {issue}, ... ]}
+' Mỗi issue gồm: number, title, url, state, author, createdAt, updatedAt,
+'   closedAt, labels, assignees, milestone, projectFields (JSON array thật).
+' ---------------------------------------------------------------------------
+Public Function GetRepoIssuesJson(ByVal githubId As String, _
+                                  ByVal repoName As String, _
+                                  Optional ByVal states As String = "ALL") As String
+    Dim result As RepoIssuesResult
+    GetRepoIssues githubId, repoName, result, states
+    
+    Dim sb As String
+    sb = "{"
+    sb = sb & """success"":" & LCase$(CStr(result.Success))
+    sb = sb & ",""totalCount"":" & result.TotalCount
+    sb = sb & ",""errorCode"":""" & JsonEscape(result.ErrorCode) & """"
+    sb = sb & ",""errorMessage"":""" & JsonEscape(result.ErrorMessage) & """"
+    sb = sb & ",""issues"":["
+    
+    If result.Success And result.TotalCount > 0 Then
+        Dim i As Long, cur As RepoIssue
+        For i = 1 To result.TotalCount
+            cur = m_Issues(i)
+            If i > 1 Then sb = sb & ","
+            sb = sb & "{"
+            sb = sb & """number"":" & cur.Number
+            sb = sb & ",""title"":""" & JsonEscape(cur.Title) & """"
+            sb = sb & ",""url"":""" & JsonEscape(cur.Url) & """"
+            sb = sb & ",""state"":""" & JsonEscape(cur.State) & """"
+            sb = sb & ",""author"":""" & JsonEscape(cur.Author) & """"
+            sb = sb & ",""createdAt"":""" & JsonEscape(FmtDateJson(cur.CreatedAt)) & """"
+            sb = sb & ",""updatedAt"":""" & JsonEscape(FmtDateJson(cur.UpdatedAt)) & """"
+            sb = sb & ",""closedAt"":""" & JsonEscape(IIf(cur.ClosedAt = CDate(0), "", FmtDateJson(cur.ClosedAt))) & """"
+            sb = sb & ",""labels"":""" & JsonEscape(cur.Labels) & """"
+            sb = sb & ",""assignees"":""" & JsonEscape(cur.Assignees) & """"
+            sb = sb & ",""milestone"":""" & JsonEscape(cur.Milestone) & """"
+            ' ProjectFields đã là chuỗi JSON array hợp lệ -> nhúng trực tiếp
+            Dim pf As String: pf = cur.ProjectFields
+            If pf = "" Then pf = "[]"
+            sb = sb & ",""projectFields"":" & pf
+            sb = sb & "}"
+        Next i
+    End If
+    
+    sb = sb & "]}"
+    GetRepoIssuesJson = sb
+End Function
+
+' FmtDateJson - Format VBA Date thành chuỗi ISO "yyyy-mm-ddThh:mm:ss" cho JSON
+Private Function FmtDateJson(ByVal d As Date) As String
+    If d = CDate(0) Then FmtDateJson = "": Exit Function
+    FmtDateJson = Format$(d, "yyyy-mm-dd") & "T" & Format$(d, "hh:mm:ss")
+End Function
+
+' ---------------------------------------------------------------------------
 ' WriteRepoIssuesTable - Write issues data to a dedicated worksheet as a table
 ' Calls GetRepoIssues, creates/replaces a sheet named "{githubId}_{repoName}",
 ' writes header + data rows starting at A1, and creates a ListObject.

@@ -53,6 +53,60 @@ Public Sub SetMaxIssues(ByVal maxIssues As Long)
     m_MaxIssues = maxIssues
 End Sub
 
+' ---------------------------------------------------------------------------
+' GetRepoIssuesJson - Lấy issues và trả về dưới dạng chuỗi JSON
+' Định dạng kết quả:
+'   {"success":true,"totalCount":N,"errorCode":"","errorMessage":"",
+'    "issues":[ {issue}, ... ]}
+' Mỗi issue: {"number":1,"title":"...","url":"...","state":"...",
+'             "author":"...","createdAt":"...","updatedAt":"...","closedAt":"...",
+'             "labels":"...","assignees":"...","milestone":"...",
+'             "projectFields":[ {"project":"...","field":"...","value":"..."} ]}
+' (projectFields là JSON array thật, không phải chuỗi escape)
+' ---------------------------------------------------------------------------
+Public Function GetRepoIssuesJson(ByVal githubId As String, _
+                                  ByVal repoName As String, _
+                                  Optional ByVal states As String = "ALL") As String
+    Dim result As RepoIssuesResult
+    GetRepoIssues githubId, repoName, result, states
+    
+    Dim sb As String
+    sb = "{"
+    sb = sb & """success"":" & LCase$(CStr(result.Success))
+    sb = sb & ",""totalCount"":" & result.TotalCount
+    sb = sb & ",""errorCode"":""" & JEsc(result.ErrorCode) & """"
+    sb = sb & ",""errorMessage"":""" & JEsc(result.ErrorMessage) & """"
+    sb = sb & ",""issues"":["
+    
+    If result.Success And result.TotalCount > 0 Then
+        Dim i As Long, cur As RepoIssue
+        For i = 1 To result.TotalCount
+            cur = m_Issues(i)
+            If i > 1 Then sb = sb & ","
+            sb = sb & "{"
+            sb = sb & """number"":" & cur.Number
+            sb = sb & ",""title"":""" & JEsc(cur.Title) & """"
+            sb = sb & ",""url"":""" & JEsc(cur.Url) & """"
+            sb = sb & ",""state"":""" & JEsc(cur.State) & """"
+            sb = sb & ",""author"":""" & JEsc(cur.Author) & """"
+            sb = sb & ",""createdAt"":""" & JEsc(FmtDate(cur.CreatedAt)) & """"
+            sb = sb & ",""updatedAt"":""" & JEsc(FmtDate(cur.UpdatedAt)) & """"
+            sb = sb & ",""closedAt"":""" & JEsc(IIf(cur.ClosedAt = CDate(0), "", FmtDate(cur.ClosedAt))) & """"
+            sb = sb & ",""labels"":""" & JEsc(cur.Labels) & """"
+            sb = sb & ",""assignees"":""" & JEsc(cur.Assignees) & """"
+            sb = sb & ",""milestone"":""" & JEsc(cur.Milestone) & """"
+            ' ProjectFields đã là chuỗi JSON array hợp lệ -> nhúng trực tiếp
+            Dim pf As String: pf = cur.ProjectFields
+            If pf = "" Then pf = "[]"
+            sb = sb & ",""projectFields"":" & pf
+            sb = sb & "}"
+        Next i
+    End If
+    
+    sb = sb & "]}"
+    GetRepoIssuesJson = sb
+End Function
+
 Private Sub GetRepoIssues(ByVal githubId As String, _
                          ByVal repoName As String, _
                          ByRef outResult As RepoIssuesResult, _
@@ -442,6 +496,12 @@ End Sub
 Private Sub SetFailure(ByRef r As RepoIssuesResult, ByVal code As String, ByVal msg As String)
     r.Success = False: r.ErrorCode = code: r.ErrorMessage = msg: r.TotalCount = 0: m_IssuesCount = 0
 End Sub
+
+' Format a VBA Date as ISO-like string "yyyy-mm-ddThh:mm:ss" for JSON output
+Private Function FmtDate(ByVal d As Date) As String
+    If d = CDate(0) Then FmtDate = "": Exit Function
+    FmtDate = Format$(d, "yyyy-mm-dd") & "T" & Format$(d, "hh:mm:ss")
+End Function
 
 ' ---------------------------------------------------------------------------
 ' DoHttpPost - Cross-platform HTTP POST to GitHub GraphQL API

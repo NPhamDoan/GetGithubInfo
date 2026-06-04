@@ -97,6 +97,54 @@ End Sub
 | `SetGitHubToken token` | Cấu hình Personal Access Token |
 | `SetMaxIssues n` | Đặt số issue tối đa (≥ 1, mặc định 100). Nếu > 100 sẽ tự pagination |
 | `WriteRepoIssuesTable id, repo, [states], [columns]` | Ghi bảng issues ra sheet mới |
+| `GetRepoIssuesJson(id, repo, [states])` | Trả về chuỗi JSON chứa danh sách issues |
+
+### Lấy dữ liệu dạng JSON
+
+Nếu muốn xử lý dữ liệu trong code thay vì ghi ra sheet, dùng `GetRepoIssuesJson`:
+
+```vb
+Sub LayJson()
+    SetGitHubToken "ghp_your_token_here"
+    
+    Dim json As String
+    json = GetRepoIssuesJson("octocat", "Hello-World", "OPEN")
+    
+    Debug.Print json
+    ' Hoặc parse lại để duyệt:
+    Dim data As Object
+    Set data = JsonConverter.ParseJson(json)
+    If data("success") Then
+        Debug.Print "Tổng: " & data("totalCount")
+        Dim iss As Object
+        For Each iss In data("issues")
+            Debug.Print iss("number") & ": " & iss("title")
+        Next iss
+    End If
+End Sub
+```
+
+Cấu trúc JSON trả về:
+
+```json
+{
+  "success": true,
+  "totalCount": 2,
+  "errorCode": "",
+  "errorMessage": "",
+  "issues": [
+    {
+      "number": 12, "title": "...", "url": "...", "state": "OPEN",
+      "author": "...", "createdAt": "2025-01-01T10:00:00",
+      "updatedAt": "...", "closedAt": "", "labels": "bug, ui",
+      "assignees": "alice", "milestone": "v1.0",
+      "projectFields": [ {"project": "Sprint", "field": "Status", "value": "In Progress"} ]
+    }
+  ]
+}
+```
+
+> Khi lỗi: `success` = `false`, `errorCode`/`errorMessage` mô tả lỗi, `issues` rỗng.
 
 ### WriteRepoIssuesTable
 

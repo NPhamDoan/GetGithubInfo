@@ -365,6 +365,42 @@ Public Function GetRepoIssueField(ByVal githubId As String, ByVal repoName As St
 
 **Trả về:** Giá trị trường tương ứng, `#VALUE!` nếu fieldName không hợp lệ, `#N/A` nếu lỗi hoặc index ngoài phạm vi
 
+### GetRepoIssuesJson
+
+```vb
+Public Function GetRepoIssuesJson(ByVal githubId As String, ByVal repoName As String, Optional ByVal states As String = "ALL") As String
+```
+
+**Tham số:**
+- `githubId` — GitHub username hoặc tổ chức
+- `repoName` — Tên repository
+- `states` (Optional) — `"ALL"` (mặc định), `"OPEN"`, hoặc `"CLOSED"`
+
+**Trả về:** Chuỗi JSON `{"success":bool,"totalCount":N,"errorCode":"","errorMessage":"","issues":[...]}`. Dùng khi muốn xử lý dữ liệu trong code thay vì ghi ra sheet.
+
+Ví dụ:
+
+```vb
+Sub LayJson()
+    SetGitHubToken "ghp_your_token_here"
+    Dim json As String
+    json = GetRepoIssuesJson("octocat", "Hello-World", "OPEN")
+    Debug.Print json
+
+    ' Parse lại để duyệt
+    Dim data As Object
+    Set data = JsonConverter.ParseJson(json)
+    If data("success") Then
+        Dim iss As Object
+        For Each iss In data("issues")
+            Debug.Print iss("number") & ": " & iss("title")
+        Next iss
+    End If
+End Sub
+```
+
+Mỗi issue trong `issues`: `number, title, url, state, author, createdAt, updatedAt, closedAt, labels, assignees, milestone, projectFields` (projectFields là JSON array thật).
+
 ### WriteRepoIssuesTable
 
 ```vb
